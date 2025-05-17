@@ -1,0 +1,148 @@
+#!/bin/bash
+
+# Цвета
+GREEN='\033[0;32m'
+RED='\033[0;31m'
+NC='\033[0m'
+
+# Проверка root
+if [ "$EUID" -ne 0 ]; then
+    echo -e "${RED}Внимание: программа должна быть запущена от имени root (sudo) для корректной работы.${NC}"
+    exit 1
+fi
+
+# Помощь
+usage() {
+    echo -e "${GREEN}Lumen PacMan Companion, версия 1.0 (lpmc)${NC}"
+    echo "Использование: lpmc [команда] [пакет]"
+    echo "Команды:"
+    echo "  install       Установить пакет"
+    echo "  remove        Удалить пакет"
+    echo "  update        Обновить список пакетов"
+    echo "  upgrade       Обновить систему"
+    echo "  search        Поиск пакета"
+    echo "  info          Информация о пакете"
+    echo "  clean         Очистить кэш"
+    echo "  aur           Установить пакет из AUR"
+    echo "  kernel        Установить/обновить ядро"
+    echo "  theme         Применить тему"
+    exit 1
+}
+
+# Команды
+case "$1" in
+    install)
+        pacman -Sy "$2"
+        ;;
+    remove)
+        pacman -R "$2"
+        ;;
+    update)
+        pacman -Syy
+        ;;
+    upgrade)
+        pacman -Syu --noconfirm
+        ;;
+    search)
+        pacman -Ss "$2"
+        ;;
+    info)
+        pacman -Si "$2"
+        ;;
+    clean)
+        pacman -Sc --noconfirm
+        ;;
+    aur)
+        if ! command -v paru &> /dev/null; then
+            echo -e "${RED}Ошибка: paru не установлен!${NC}"
+            exit 1
+        fi
+        paru -S "$2"
+        ;;
+    kernel)
+        pacman -S linux linux-headers --noconfirm
+        ;;
+    theme)
+        if [ -z "$2" ]; then
+            echo "Использование: lpmc theme [тема]"
+            exit 1
+        fi
+        THEME="$2"
+        if [ -d "/usr/share/themes/$THEME" ]; then
+            echo "Установка темы $THEME..."
+            feh --bg-scale "/usr/share/themes/$THEME/wallpaper.jpg"
+            notify-send "Тема изменена на $THEME"
+        else
+            echo "Ошибка: Тема $THEME не найдена!"
+        fi
+        ;;
+    add-repo)
+        REPO_NAME=$(dialog --stdout --menu "Выберите репозиторий:" 15 60 6 \
+            "chaotic-aur" "Chaotic-AUR (AUR-пакеты)" \
+            "blackarch" "BlackArch (hacking tools)" \
+            "endeavouros" "EndeavourOS (community packages)" \
+            "custom" "Ввести вручную")
+
+        case $? in
+            1)
+                echo "Отмена."
+                exit 1
+                ;;
+        esac
+
+        if [[ "$REPO_NAME" == "custom" ]]; then
+            REPO_NAME=$(dialog --inputbox "Введите имя репозитория (например, myrepo):" 8 60 3>&1 1>&2 2>&3)
+            REPO_URL=$(dialog --inputbox "Введите URL репозитория (например, [https://example.com/repo/os ])" 8 60 3>&1 1>&2 2>&3)
+            REPO_SIG=$(dialog --yesno "Репозиторий подписан? (Да/Нет)" 6 60; echo $?)
+
+            if grep -q "$REPO_NAME" /etc/pacman.conf; then
+                echo -e "${RED}Ошибка: Репозиторий '$REPO_NAME' уже существует!${NC}"
+                exit 1
+            fi
+
+            echo -e "\n[$REPO_NAME]" >> /etc/pacman.conf
+            echo "Server = $REPO_URL" >> /etc/pacman.conf
+            if [[ "$REPO_SIG" -eq 0 ]]; then
+                echo "SigLevel = Required DatabaseOptional" >> /etc/pacman.conf
+            else
+                echo "SigLevel = Never" >> /etc/pacman.conf
+            fi
+            echo -e "${GREEN}Репозиторий '$REPO_NAME' добавлен!${NC}"
+
+        elif [[ "$REPO_NAME" == "chaotic-aur" ]]; then
+            if grep -q "chaotic-aur" /etc/pacman.conf; then
+                echo -e "${RED}Ошибка: Chaotic-AUR уже добавлен!${NC}"
+                exit 1
+            fi
+            echo -e "\n[chaotic-aur]\nInclude = /etc/pacman.d/chaotic-mirrorlist" >> /etc/pacman.conf
+            curl -s https://cdn-mirror.chaotic.cx/chaotic-aur/chaotic-mirrorlist  > /etc/pacman.d/chaotic-mirrorlist
+            echo -e "${GREEN}Chaotic-AUR успешно добавлен!${NC}"
+
+        elif [[ "$REPO_NAME" == "blackarch" ]]; then
+            if grep -q "blackarch" /etc/pacman.conf; then
+                echo -e "${RED}Ошибка: BlackArch уже добавлен!${NC}"
+                exit 1
+            fi
+            echo -e "\n[blackarch]\nServer = https://mirror.blackarch.org/blackarch/os/ \$arch" >> /etc/pacman.conf
+            echo -e "${GREEN}BlackArch успешно добавлен!${NC}"
+
+        elif [[ "$REPO_NAME" == "endeavouros" ]]; then
+            if grep -q "endeavouros" /etc/pacman.conf; then
+                echo -e "${RED}Ошибка: EndeavourOS уже добавлен!${NC}"
+                exit 1
+            fi
+            echo -e "\n[endeavouros]\nServer = https://pkgbuild.com/ \$arch" >> /etc/pacman.conf
+            echo -e "${GREEN}EndeavourOS успешно добавлен!${NC}"
+
+        else
+            echo -e "${RED}Ошибка: Неизвестный репозиторий!${NC}"
+            exit 1
+        fi
+
+        echo -e "${GREEN}Обновляем список пакетов...${NC}"
+        sudo pacman -Syy --noconfirm
+        ;;
+    *)
+        usage
+        ;;
+esac
